@@ -157,4 +157,53 @@ def test_non_tcp_packet_has_no_tcp_flags():
 
     result = analyze_packet(packet)
 
+
+
     assert result["tcp_flags"] is None
+
+
+def test_analyze_arp_request_details():
+    packet = Ether() / ARP(
+        op=1,
+        hwsrc="00:11:22:33:44:55",
+        hwdst="00:00:00:00:00:00",
+        psrc="192.168.1.10",
+        pdst="192.168.1.1",
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["protocol"] == "ARP"
+    assert result["arp_operation"] == 1
+    assert result["arp_source_mac"] == "00:11:22:33:44:55"
+    assert result["arp_destination_mac"] == "00:00:00:00:00:00"
+
+
+def test_analyze_arp_reply_details():
+    packet = Ether() / ARP(
+        op=2,
+        hwsrc="00:11:22:33:44:66",
+        hwdst="00:11:22:33:44:55",
+        psrc="192.168.1.1",
+        pdst="192.168.1.10",
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["protocol"] == "ARP"
+    assert result["arp_operation"] == 2
+    assert result["arp_source_mac"] == "00:11:22:33:44:66"
+    assert result["arp_destination_mac"] == "00:11:22:33:44:55"
+
+
+def test_non_arp_packet_has_no_arp_details():
+    packet = IP(
+        src="192.168.1.10",
+        dst="8.8.8.8",
+    ) / UDP(sport=53000, dport=53)
+
+    result = analyze_packet(packet)
+
+    assert result["arp_operation"] is None
+    assert result["arp_source_mac"] is None
+    assert result["arp_destination_mac"] is None

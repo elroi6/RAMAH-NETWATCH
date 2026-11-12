@@ -1,3 +1,4 @@
+
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6, ICMPv6Unknown
 from scapy.layers.l2 import ARP
@@ -14,6 +15,10 @@ def analyze_packet(packet: Packet):
     destination_port = None
     tcp_flags = None
 
+    arp_operation = None
+    arp_source_mac = None
+    arp_destination_mac = None
+
     if packet.haslayer(IP):
         ip_layer = packet[IP]
         source_ip = ip_layer.src
@@ -28,6 +33,9 @@ def analyze_packet(packet: Packet):
         arp_layer = packet[ARP]
         source_ip = arp_layer.psrc
         destination_ip = arp_layer.pdst
+        arp_operation = int(arp_layer.op)
+        arp_source_mac = str(arp_layer.hwsrc).lower()
+        arp_destination_mac = str(arp_layer.hwdst).lower()
 
     if packet.haslayer(TCP):
         transport_layer = packet[TCP]
@@ -68,6 +76,9 @@ def analyze_packet(packet: Packet):
         "source_port": source_port,
         "destination_port": destination_port,
         "tcp_flags": tcp_flags,
+        "arp_operation": arp_operation,
+        "arp_source_mac": arp_source_mac,
+        "arp_destination_mac": arp_destination_mac,
         "protocol": protocol,
         "packet_size": len(packet),
     }

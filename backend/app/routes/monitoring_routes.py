@@ -1,6 +1,7 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from app.services import packet_capture
+from app.services.arp_anomaly_detector import detect_arp_anomalies
 from app.services.port_scan_detector import detect_port_scans
 from app.services.traffic_statistics import calculate_traffic_statistics
 
@@ -55,7 +56,7 @@ def get_capture_options(allowed_fields=None):
         "max_packets": payload.get("max_packets", 100),
     }
 
-    for field in ("time_window", "port_threshold"):
+    for field in ("time_window", "port_threshold", "arp_time_window"):
         if field in allowed_fields and field in payload:
             options[field] = payload[field]
 
@@ -63,7 +64,10 @@ def get_capture_options(allowed_fields=None):
 
 
 def capture_network_packets(options=None, allowed_fields=None):
-    interface = current_app.config.get("NETWATCH_INTERFACE")
+    interface = current_app.config.get(
+        "NETWATCH_CAPTURE_INTERFACE",
+        current_app.config.get("NETWATCH_INTERFACE"),
+    )
 
     if not interface:
         return None, (
@@ -86,6 +90,7 @@ def capture_network_packets(options=None, allowed_fields=None):
             duration=options["duration"],
             max_packets=options["max_packets"],
         )
+
         return result, None
 
     except ValueError:
@@ -149,6 +154,7 @@ def detect_network_threats():
         "max_packets",
         "time_window",
         "port_threshold",
+        "arp_time_window",
     }
 
     options, error = get_capture_options(allowed_fields)
@@ -158,18 +164,24 @@ def detect_network_threats():
 
     time_window = options.get("time_window", 10)
     port_threshold = options.get("port_threshold", 10)
+    arp_time_window = options.get("arp_time_window", 30)
 
     try:
-        # Validate detection settings before starting packet capture.
         detect_port_scans(
             [],
             time_window=time_window,
             port_threshold=port_threshold,
         )
+
+        detect_arp_anomalies(
+            [],
+            time_window=arp_time_window,
+        )
+
     except ValueError:
         return jsonify({
             "success": False,
-            "message": "Invalid port scan detection settings."
+            "message": "Invalid threat detection settings."
         }), 400
 
     capture_result, error = capture_network_packets(options)
@@ -177,11 +189,20 @@ def detect_network_threats():
     if error:
         return error
 
-    alerts = detect_port_scans(
-        capture_result["packets"],
+    packets = capture_result["packets"]
+
+    port_scan_alerts = detect_port_scans(
+        packets,
         time_window=time_window,
         port_threshold=port_threshold,
     )
+
+    arp_alerts = detect_arp_anomalies(
+        packets,
+        time_window=arp_time_window,
+    )
+
+    alerts = port_scan_alerts + arp_alerts
 
     return jsonify({
         "success": True,
@@ -193,7 +214,10 @@ def detect_network_threats():
             "detection_settings": {
                 "time_window": time_window,
                 "port_threshold": port_threshold,
+                "arp_time_window": arp_time_window,
             },
             "alerts": alerts,
+            "port_scan_alerts": port_scan_alerts,
+            "arp_alerts": arp_alerts,
         },
     }), 200

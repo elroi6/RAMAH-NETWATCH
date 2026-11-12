@@ -1,8 +1,11 @@
 import pytest
+
+from app.services import packet_capture
+
+
 @pytest.fixture
 def client(app):
     return app.test_client()
-from app.services import packet_capture
 
 
 def test_capture_success(app, monkeypatch):
@@ -47,6 +50,7 @@ def test_capture_uses_default_options(app, monkeypatch):
             "duration": duration,
             "max_packets": max_packets,
         })
+
         return {
             "interface": interface,
             "captured_packets": 0,
@@ -365,9 +369,11 @@ def test_detection_accepts_custom_settings(client, monkeypatch):
         "duration": 5,
         "max_packets": 50,
     }
+
     assert data["result"]["detection_settings"] == {
         "time_window": 15,
         "port_threshold": 5,
+        "arp_time_window": 30,
     }
 
 
@@ -426,3 +432,163 @@ def test_detection_rejects_get(client):
     response = client.get("/api/monitoring/detect")
 
     assert response.status_code == 405
+def test_detection_finds_arp_conflict(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    packets = [
+        {
+            "protocol": "ARP",
+            "source_ip": "192.168.1.20",
+            "destination_ip": "192.168.1.1",
+            "arp_source_mac": "aa:bb:cc:dd:ee:01",
+            "arp_destination_mac": "00:00:00:00:00:00",
+            "timestamp": 1000.0,
+        },
+        {
+            "protocol": "ARP",
+            "source_ip": "192.168.1.20",
+            "destination_ip": "192.168.1.1",
+            "arp_source_mac": "aa:bb:cc:dd:ee:02",
+            "arp_destination_mac": "00:00:00:00:00:00",
+            "timestamp": 1001.0,
+        },
+    ]
+
+    def fake_capture(interface, duration, max_packets):
+        return {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        }
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post("/api/monitoring/detect")
+
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert data["result"]["alert_count"] == 1
+    assert len(data["result"]["arp_alerts"]) == 1
+    assert data["result"]["arp_alerts"][0]["type"] == "ARP_IP_MAC_CONFLICT"
+    assert data["result"]["arp_alerts"][0]["severity"] == "HIGH"
+
+
+def test_detection_accepts_custom_arp_time_window(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    def fake_capture(interface, duration, max_packets):
+        return {
+            "interface": interface,
+            "captured_packets": 0,
+            "packets": [],
+        }
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post(
+        "/api/monitoring/detect",
+        json={"arp_time_window": 45},
+    )
+
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["result"]["detection_settings"]["arp_time_window"] == 45
+
+
+def test_detection_rejects_invalid_arp_time_window(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    def fake_capture(*args, **kwargs):
+        pytest.fail("Capture should not start with invalid ARP settings.")
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post(
+        "/api/monitoring/detect",
+        json={"arp_time_window": 0},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["success"] is False
+
+
+def test_detection_returns_combined_port_scan_and_arp_alerts(
+    client,
+    monkeypatch,
+):
+    from app.routes import monitoring_routes
+
+    packets = [
+        {
+            "protocol": "TCP",
+            "source_ip": "192.168.1.10",
+            "destination_ip": "192.168.1.20",
+            "destination_port": port,
+            "timestamp": 1000 + index * 0.5,
+            "tcp_flags": "S",
+        }
+        for index, port in enumerate(range(20, 30))
+    ]
+
+    packets.extend([
+        {
+            "protocol": "ARP",
+            "source_ip": "192.168.1.30",
+            "destination_ip": "192.168.1.1",
+            "arp_source_mac": "aa:bb:cc:dd:ee:01",
+            "timestamp": 1001.0,
+        },
+        {
+            "protocol": "ARP",
+            "source_ip": "192.168.1.30",
+            "destination_ip": "192.168.1.1",
+            "arp_source_mac": "aa:bb:cc:dd:ee:02",
+            "timestamp": 1002.0,
+        },
+    ])
+
+    def fake_capture(interface, duration, max_packets):
+        return {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        }
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post("/api/monitoring/detect")
+    data = response.get_json()
+    result = data["result"]
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert result["captured_packets"] == 12
+    assert result["alert_count"] == 2
+    assert len(result["port_scan_alerts"]) == 1
+    assert len(result["arp_alerts"]) == 1
+    assert len(result["alerts"]) == 2
+    assert {
+        alert["type"] for alert in result["alerts"]
+    } == {
+        "POSSIBLE_PORT_SCAN",
+        "ARP_IP_MAC_CONFLICT",
+    }
