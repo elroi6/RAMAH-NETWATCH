@@ -12,6 +12,7 @@ def analyze_packet(packet: Packet):
     destination_ip = None
     source_port = None
     destination_port = None
+    tcp_flags = None
 
     if packet.haslayer(IP):
         ip_layer = packet[IP]
@@ -33,6 +34,7 @@ def analyze_packet(packet: Packet):
         protocol = "TCP"
         source_port = transport_layer.sport
         destination_port = transport_layer.dport
+        tcp_flags = str(transport_layer.flags)
 
     elif packet.haslayer(UDP):
         transport_layer = packet[UDP]
@@ -65,6 +67,7 @@ def analyze_packet(packet: Packet):
         "destination_ip": destination_ip,
         "source_port": source_port,
         "destination_port": destination_port,
+        "tcp_flags": tcp_flags,
         "protocol": protocol,
         "packet_size": len(packet),
     }

@@ -127,3 +127,34 @@ def test_analyze_ipv6_icmp_echo_reply():
     assert result["protocol"] == "ICMP"
     assert result["source_port"] is None
     assert result["destination_port"] is None
+def test_analyze_tcp_syn_packet():
+    packet = (
+        IP(src="192.168.1.10", dst="192.168.1.20")
+        / TCP(sport=54321, dport=22, flags="S")
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["tcp_flags"] == "S"
+
+
+def test_analyze_tcp_syn_ack_packet():
+    packet = (
+        IP(src="192.168.1.20", dst="192.168.1.10")
+        / TCP(sport=22, dport=54321, flags="SA")
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["tcp_flags"] == "SA"
+
+
+def test_non_tcp_packet_has_no_tcp_flags():
+    packet = (
+        IP(src="192.168.1.10", dst="8.8.8.8")
+        / UDP(sport=53000, dport=53)
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["tcp_flags"] is None

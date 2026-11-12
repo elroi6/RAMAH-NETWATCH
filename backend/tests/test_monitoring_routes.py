@@ -243,3 +243,186 @@ def test_statistics_rejects_invalid_options(client, monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+def test_detection_finds_port_scan(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    packets = [
+        {
+            "protocol": "TCP",
+            "source_ip": "192.168.1.10",
+            "destination_ip": "192.168.1.20",
+            "destination_port": port,
+            "timestamp": 1000 + index * 0.5,
+            "tcp_flags": "S",
+        }
+        for index, port in enumerate(range(20, 30))
+    ]
+
+    def fake_capture(interface, duration, max_packets):
+        return {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        }
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post("/api/monitoring/detect")
+
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert data["result"]["interface"] == "wlan0"
+    assert data["result"]["captured_packets"] == 10
+    assert data["result"]["alert_count"] == 1
+    assert data["result"]["alerts"][0]["type"] == "POSSIBLE_PORT_SCAN"
+
+
+def test_detection_returns_no_alerts_for_normal_traffic(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    packets = [
+        {
+            "protocol": "TCP",
+            "source_ip": "192.168.1.10",
+            "destination_ip": "192.168.1.20",
+            "destination_port": 443,
+            "timestamp": 1000 + index,
+            "tcp_flags": "S",
+        }
+        for index in range(5)
+    ]
+
+    def fake_capture(interface, duration, max_packets):
+        return {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        }
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post("/api/monitoring/detect")
+
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert data["result"]["alert_count"] == 0
+    assert data["result"]["alerts"] == []
+
+
+def test_detection_accepts_custom_settings(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    received = {}
+
+    def fake_capture(interface, duration, max_packets):
+        received.update({
+            "interface": interface,
+            "duration": duration,
+            "max_packets": max_packets,
+        })
+
+        return {
+            "interface": interface,
+            "captured_packets": 0,
+            "packets": [],
+        }
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post(
+        "/api/monitoring/detect",
+        json={
+            "duration": 5,
+            "max_packets": 50,
+            "time_window": 15,
+            "port_threshold": 5,
+        },
+    )
+
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert received == {
+        "interface": "wlan0",
+        "duration": 5,
+        "max_packets": 50,
+    }
+    assert data["result"]["detection_settings"] == {
+        "time_window": 15,
+        "port_threshold": 5,
+    }
+
+
+def test_detection_rejects_invalid_settings_before_capture(
+    client,
+    monkeypatch,
+):
+    from app.routes import monitoring_routes
+
+    def fake_capture(*args, **kwargs):
+        pytest.fail("Capture should not start with invalid settings.")
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post(
+        "/api/monitoring/detect",
+        json={"port_threshold": 1},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["success"] is False
+
+
+def test_detection_handles_capture_failure(client, monkeypatch):
+    from app.routes import monitoring_routes
+
+    def fake_capture(*args, **kwargs):
+        raise RuntimeError("Capture failed")
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        fake_capture,
+    )
+
+    response = client.post("/api/monitoring/detect")
+
+    assert response.status_code == 503
+    assert response.get_json()["success"] is False
+
+
+def test_detection_rejects_unsupported_fields(client):
+    response = client.post(
+        "/api/monitoring/detect",
+        json={"interface": "wlan0"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_detection_rejects_get(client):
+    response = client.get("/api/monitoring/detect")
+
+    assert response.status_code == 405
