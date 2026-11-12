@@ -30,7 +30,11 @@ def create_app(config_class=None):
     from app.routes.health import health_bp
     from app.routes.device_routes import device_bp
     from app.routes.discovery_routes import discovery_bp
+    from app.routes.monitoring_routes import monitoring_bp
+
     app.register_blueprint(health_bp, url_prefix="/api")
     app.register_blueprint(device_bp, url_prefix="/api")
     app.register_blueprint(discovery_bp, url_prefix="/api")
+    app.register_blueprint(monitoring_bp, url_prefix="/api")
+
     return app
