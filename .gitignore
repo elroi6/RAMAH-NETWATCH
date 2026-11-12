@@ -1,0 +1,26 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment variables
+.env
+.env.*
+
+# Database and local data
+*.db
+*.sqlite
+*.sqlite3
+backend/instance/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Reports and local scan data
+reports/
+
+# Build and system files
+.DS_Store
+*.log
