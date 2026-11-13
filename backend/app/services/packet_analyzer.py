@@ -2,7 +2,7 @@
 from scapy.layers.dns import DNS
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6, ICMPv6Unknown
-from scapy.layers.l2 import ARP
+from scapy.layers.l2 import ARP, Ether
 from scapy.packet import Packet
 
 
@@ -17,6 +17,9 @@ def analyze_packet(packet: Packet):
     tcp_flags = None
     transport_protocol = None
 
+    source_mac = None
+    destination_mac = None
+
     arp_operation = None
     arp_source_mac = None
     arp_destination_mac = None
@@ -26,6 +29,11 @@ def analyze_packet(packet: Packet):
     dns_is_response = None
     dns_response_code = None
     dns_answer_count = None
+
+    if packet.haslayer(Ether):
+        ethernet_layer = packet[Ether]
+        source_mac = str(ethernet_layer.src).lower()
+        destination_mac = str(ethernet_layer.dst).lower()
 
     if packet.haslayer(IP):
         ip_layer = packet[IP]
@@ -108,6 +116,8 @@ def analyze_packet(packet: Packet):
         "timestamp": float(packet.time),
         "source_ip": source_ip,
         "destination_ip": destination_ip,
+        "source_mac": source_mac,
+        "destination_mac": destination_mac,
         "source_port": source_port,
         "destination_port": destination_port,
         "tcp_flags": tcp_flags,

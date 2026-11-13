@@ -1,4 +1,3 @@
-
 import pytest
 
 from scapy.layers.dns import DNS, DNSQR
@@ -285,3 +284,51 @@ def test_non_dns_packet_has_no_dns_details():
     assert result["dns_is_response"] is None
     assert result["dns_response_code"] is None
     assert result["dns_answer_count"] is None
+def test_analyze_ethernet_packet_extracts_mac_addresses():
+    packet = (
+        Ether(
+            src="00:11:22:33:44:55",
+            dst="AA:BB:CC:DD:EE:FF",
+        )
+        / IP(src="192.168.1.10", dst="192.168.1.20")
+        / TCP(sport=54321, dport=443)
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["source_mac"] == "00:11:22:33:44:55"
+    assert result["destination_mac"] == "aa:bb:cc:dd:ee:ff"
+
+
+def test_analyze_packet_without_ethernet_has_no_mac_addresses():
+    packet = (
+        IP(src="192.168.1.10", dst="8.8.8.8")
+        / UDP(sport=53000, dport=53)
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["source_mac"] is None
+    assert result["destination_mac"] is None
+
+
+def test_analyze_ethernet_arp_packet_extracts_both_mac_fields():
+    packet = (
+        Ether(
+            src="00:11:22:33:44:55",
+            dst="ff:ff:ff:ff:ff:ff",
+        )
+        / ARP(
+            op=1,
+            hwsrc="00:11:22:33:44:55",
+            hwdst="00:00:00:00:00:00",
+            psrc="192.168.1.10",
+            pdst="192.168.1.1",
+        )
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["source_mac"] == "00:11:22:33:44:55"
+    assert result["destination_mac"] == "ff:ff:ff:ff:ff:ff"
+    assert result["arp_source_mac"] == "00:11:22:33:44:55"

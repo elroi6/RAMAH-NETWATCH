@@ -1,8 +1,8 @@
 import pytest
 
+from app import db
+from app.models import Device
 from app.services import packet_capture
-
-
 @pytest.fixture
 def client(app):
     return app.test_client()
@@ -716,3 +716,122 @@ def test_detection_rejects_invalid_dns_settings_before_capture(
 
     assert response.status_code == 400
     assert response.get_json()["success"] is False
+
+def test_detection_finds_unknown_device(client, app, monkeypatch):
+    from app.routes import monitoring_routes
+
+    packets = [{
+        "protocol": "TCP",
+        "source_ip": "192.168.1.50",
+        "source_mac": "aa:bb:cc:dd:ee:50",
+        "destination_ip": "192.168.1.1",
+    }]
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        lambda interface, duration, max_packets: {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        },
+    )
+    monkeypatch.setattr(
+        monitoring_routes.nmap_runner,
+        "get_interface_network",
+        lambda interface: "192.168.1.0/24",
+    )
+
+    response = client.post("/api/monitoring/detect")
+    data = response.get_json()
+    result = data["result"]
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert len(result["unknown_device_alerts"]) == 1
+    assert result["unknown_device_alerts"][0]["type"] == "UNKNOWN_DEVICE"
+    assert result["alert_count"] == 1
+
+
+def test_detection_finds_changed_device_mac(client, app, monkeypatch):
+    from app.routes import monitoring_routes
+
+    with app.app_context():
+        db.session.add(Device(
+            ip_address="192.168.1.20",
+            mac_address="00:11:22:33:44:55",
+            status="online",
+        ))
+        db.session.commit()
+
+    packets = [{
+        "protocol": "TCP",
+        "source_ip": "192.168.1.20",
+        "source_mac": "aa:bb:cc:dd:ee:20",
+        "destination_ip": "192.168.1.1",
+    }]
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        lambda interface, duration, max_packets: {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        },
+    )
+    monkeypatch.setattr(
+        monitoring_routes.nmap_runner,
+        "get_interface_network",
+        lambda interface: "192.168.1.0/24",
+    )
+
+    response = client.post("/api/monitoring/detect")
+    data = response.get_json()
+    result = data["result"]
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert len(result["unknown_device_alerts"]) == 1
+    assert result["unknown_device_alerts"][0]["type"] == "DEVICE_MAC_CHANGED"
+    assert result["alert_count"] == 1
+
+
+def test_detection_skips_unknown_device_check_without_mac(
+    client,
+    monkeypatch,
+):
+    from app.routes import monitoring_routes
+
+    packets = [{
+        "protocol": "TCP",
+        "source_ip": "192.168.1.50",
+        "source_mac": None,
+        "destination_ip": "192.168.1.1",
+    }]
+
+    monkeypatch.setattr(
+        monitoring_routes.packet_capture,
+        "capture_packets",
+        lambda interface, duration, max_packets: {
+            "interface": interface,
+            "captured_packets": len(packets),
+            "packets": packets,
+        },
+    )
+
+    def unexpected_network_lookup(interface):
+        pytest.fail("Network lookup should not run without MAC observations.")
+
+    monkeypatch.setattr(
+        monitoring_routes.nmap_runner,
+        "get_interface_network",
+        unexpected_network_lookup,
+    )
+
+    response = client.post("/api/monitoring/detect")
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["success"] is True
+    assert data["result"]["unknown_device_alerts"] == []

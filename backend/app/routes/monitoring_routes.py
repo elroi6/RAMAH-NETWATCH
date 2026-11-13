@@ -1,11 +1,12 @@
 
 from flask import Blueprint, current_app, jsonify, request
 
-from app.services import packet_capture
+from app.services import nmap_runner, packet_capture
 from app.services.arp_anomaly_detector import detect_arp_anomalies
 from app.services.dns_anomaly_detector import detect_dns_anomalies
 from app.services.port_scan_detector import detect_port_scans
 from app.services.traffic_statistics import calculate_traffic_statistics
+from app.services.unknown_device_detector import detect_unknown_devices
 
 
 monitoring_bp = Blueprint("monitoring", __name__)
@@ -245,7 +246,41 @@ def detect_network_threats():
         nxdomain_threshold=dns_nxdomain_threshold,
     )
 
-    alerts = port_scan_alerts + arp_alerts + dns_alerts
+    unknown_device_alerts = []
+
+    has_mac_observations = any(
+        isinstance(packet, dict)
+        and packet.get("source_ip") is not None
+        and packet.get("source_mac") is not None
+        for packet in packets
+    )
+
+    if has_mac_observations:
+        try:
+            network = nmap_runner.get_interface_network(
+                capture_result["interface"]
+            )
+
+            unknown_device_alerts = detect_unknown_devices(
+                packets,
+                network,
+            )
+
+        except (ValueError, RuntimeError):
+            return jsonify({
+                "success": False,
+                "message": (
+                    "Unable to determine the monitored network "
+                    "for device detection."
+                )
+            }), 503
+
+    alerts = (
+        port_scan_alerts
+        + arp_alerts
+        + dns_alerts
+        + unknown_device_alerts
+    )
 
     return jsonify({
         "success": True,
@@ -267,5 +302,6 @@ def detect_network_threats():
             "port_scan_alerts": port_scan_alerts,
             "arp_alerts": arp_alerts,
             "dns_alerts": dns_alerts,
+            "unknown_device_alerts": unknown_device_alerts,
         },
     }), 200
