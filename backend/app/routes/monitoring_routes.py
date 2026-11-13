@@ -1,7 +1,9 @@
+
 from flask import Blueprint, current_app, jsonify, request
 
 from app.services import packet_capture
 from app.services.arp_anomaly_detector import detect_arp_anomalies
+from app.services.dns_anomaly_detector import detect_dns_anomalies
 from app.services.port_scan_detector import detect_port_scans
 from app.services.traffic_statistics import calculate_traffic_statistics
 
@@ -56,7 +58,17 @@ def get_capture_options(allowed_fields=None):
         "max_packets": payload.get("max_packets", 100),
     }
 
-    for field in ("time_window", "port_threshold", "arp_time_window"):
+    optional_fields = (
+        "time_window",
+        "port_threshold",
+        "arp_time_window",
+        "dns_time_window",
+        "dns_query_threshold",
+        "dns_unique_domain_threshold",
+        "dns_nxdomain_threshold",
+    )
+
+    for field in optional_fields:
         if field in allowed_fields and field in payload:
             options[field] = payload[field]
 
@@ -155,6 +167,10 @@ def detect_network_threats():
         "time_window",
         "port_threshold",
         "arp_time_window",
+        "dns_time_window",
+        "dns_query_threshold",
+        "dns_unique_domain_threshold",
+        "dns_nxdomain_threshold",
     }
 
     options, error = get_capture_options(allowed_fields)
@@ -166,6 +182,17 @@ def detect_network_threats():
     port_threshold = options.get("port_threshold", 10)
     arp_time_window = options.get("arp_time_window", 30)
 
+    dns_time_window = options.get("dns_time_window", 60)
+    dns_query_threshold = options.get("dns_query_threshold", 100)
+    dns_unique_domain_threshold = options.get(
+        "dns_unique_domain_threshold",
+        50,
+    )
+    dns_nxdomain_threshold = options.get(
+        "dns_nxdomain_threshold",
+        10,
+    )
+
     try:
         detect_port_scans(
             [],
@@ -176,6 +203,14 @@ def detect_network_threats():
         detect_arp_anomalies(
             [],
             time_window=arp_time_window,
+        )
+
+        detect_dns_anomalies(
+            [],
+            time_window=dns_time_window,
+            query_threshold=dns_query_threshold,
+            unique_domain_threshold=dns_unique_domain_threshold,
+            nxdomain_threshold=dns_nxdomain_threshold,
         )
 
     except ValueError:
@@ -202,7 +237,15 @@ def detect_network_threats():
         time_window=arp_time_window,
     )
 
-    alerts = port_scan_alerts + arp_alerts
+    dns_alerts = detect_dns_anomalies(
+        packets,
+        time_window=dns_time_window,
+        query_threshold=dns_query_threshold,
+        unique_domain_threshold=dns_unique_domain_threshold,
+        nxdomain_threshold=dns_nxdomain_threshold,
+    )
+
+    alerts = port_scan_alerts + arp_alerts + dns_alerts
 
     return jsonify({
         "success": True,
@@ -215,9 +258,14 @@ def detect_network_threats():
                 "time_window": time_window,
                 "port_threshold": port_threshold,
                 "arp_time_window": arp_time_window,
+                "dns_time_window": dns_time_window,
+                "dns_query_threshold": dns_query_threshold,
+                "dns_unique_domain_threshold": dns_unique_domain_threshold,
+                "dns_nxdomain_threshold": dns_nxdomain_threshold,
             },
             "alerts": alerts,
             "port_scan_alerts": port_scan_alerts,
             "arp_alerts": arp_alerts,
+            "dns_alerts": dns_alerts,
         },
     }), 200

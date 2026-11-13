@@ -1,5 +1,7 @@
+
 import pytest
 
+from scapy.layers.dns import DNS, DNSQR
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import (
     IPv6,
@@ -99,6 +101,8 @@ def test_analyze_other_ip_packet():
 def test_analyze_packet_rejects_invalid_input():
     with pytest.raises(TypeError):
         analyze_packet("not a packet")
+
+
 def test_analyze_ipv6_icmp_echo_request():
     packet = (
         IPv6(src="2001:db8::1", dst="2001:db8::2")
@@ -127,6 +131,8 @@ def test_analyze_ipv6_icmp_echo_reply():
     assert result["protocol"] == "ICMP"
     assert result["source_port"] is None
     assert result["destination_port"] is None
+
+
 def test_analyze_tcp_syn_packet():
     packet = (
         IP(src="192.168.1.10", dst="192.168.1.20")
@@ -156,8 +162,6 @@ def test_non_tcp_packet_has_no_tcp_flags():
     )
 
     result = analyze_packet(packet)
-
-
 
     assert result["tcp_flags"] is None
 
@@ -207,3 +211,77 @@ def test_non_arp_packet_has_no_arp_details():
     assert result["arp_operation"] is None
     assert result["arp_source_mac"] is None
     assert result["arp_destination_mac"] is None
+
+
+def test_analyze_dns_query():
+    packet = (
+        IP(src="192.168.1.10", dst="8.8.8.8")
+        / UDP(sport=53000, dport=53)
+        / DNS(
+            qr=0,
+            qd=DNSQR(qname="example.com", qtype="A"),
+        )
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["protocol"] == "DNS"
+    assert result["transport_protocol"] == "UDP"
+    assert result["dns_query_name"] == "example.com"
+    assert result["dns_query_type"] == 1
+    assert result["dns_is_response"] is False
+    assert result["dns_response_code"] == 0
+
+
+def test_analyze_dns_response():
+    packet = (
+        IP(src="8.8.8.8", dst="192.168.1.10")
+        / UDP(sport=53, dport=53000)
+        / DNS(
+            qr=1,
+            rcode=3,
+            qd=DNSQR(qname="missing.example", qtype="A"),
+        )
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["protocol"] == "DNS"
+    assert result["dns_query_name"] == "missing.example"
+    assert result["dns_is_response"] is True
+    assert result["dns_response_code"] == 3
+    assert result["dns_answer_count"] == 0
+
+
+def test_analyze_dns_over_tcp():
+    packet = (
+        IP(src="192.168.1.10", dst="8.8.8.8")
+        / TCP(sport=53000, dport=53)
+        / DNS(
+            qr=0,
+            qd=DNSQR(qname="example.org", qtype="AAAA"),
+        )
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["protocol"] == "DNS"
+    assert result["transport_protocol"] == "TCP"
+    assert result["dns_query_name"] == "example.org"
+    assert result["dns_query_type"] == 28
+
+
+def test_non_dns_packet_has_no_dns_details():
+    packet = (
+        IP(src="192.168.1.10", dst="8.8.8.8")
+        / UDP(sport=53000, dport=53)
+    )
+
+    result = analyze_packet(packet)
+
+    assert result["protocol"] == "UDP"
+    assert result["dns_query_name"] is None
+    assert result["dns_query_type"] is None
+    assert result["dns_is_response"] is None
+    assert result["dns_response_code"] is None
+    assert result["dns_answer_count"] is None
